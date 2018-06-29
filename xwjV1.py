@@ -1,7 +1,7 @@
 import os
 import shutil
 import time
-
+import random
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -13,12 +13,13 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 from torchvision.models import resnet34
 from tensorboardX import SummaryWriter
+import matplotlib.pyplot as plt
+import numpy as np
 
 
-
-writer = SummaryWriter()
 
 def main():
+
     best_prec1 = 0.
     model = resnet34(pretrained = True)
     model.avgpool = nn.AvgPool2d(7)
@@ -27,6 +28,7 @@ def main():
     model.to(device)
     critearion = nn.CrossEntropyLoss().to(device)
     optimizer = torch.optim.SGD(model.parameters(),lr=0.1,momentum=0.9,weight_decay=0.004)
+
     epochs = 60
     traindir = './train'
     testdir = './val'
@@ -53,7 +55,6 @@ def main():
     testdataloader = data.DataLoader(testdata,batch_size=64,shuffle=True,num_workers=4)
 
 
-
     for epoch in range(epochs):
 
         adjust_learning_rate(optimizer,epoch)
@@ -61,15 +62,17 @@ def main():
         print('#' * 20)
         train(model,traindataloader,optimizer,critearion,device,epoch)
         prec1=validate(model,testdataloader,device,critearion,epoch)
+
         is_best = prec1 > best_prec1
-        best_prec1 = max(prec1, best_prec1)
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'best_prec1': best_prec1,
-            'optimizer': optimizer.state_dict(),
-        }, is_best)
-        print ('save model')
+        if is_best ==True:
+            best_prec1 = max(prec1, best_prec1)
+            save_checkpoint({
+                'epoch': epoch + 1,
+                'state_dict': model.state_dict(),
+                'best_prec1': best_prec1,
+                'optimizer': optimizer.state_dict(),
+            }, is_best)
+            print ('save model')
         print('&' * 20)
         print ('\n')
 
@@ -78,8 +81,9 @@ def main():
 def train(model,traindataloader,optimizer,critearion,device,epoch):
     start = time.time()
     model.train()
-    count = 0
+
     print('on train data')
+
     for i ,(im,label) in enumerate(traindataloader):
         im = im.to(device)
         label = label.to(device)
@@ -88,7 +92,6 @@ def train(model,traindataloader,optimizer,critearion,device,epoch):
         loss = critearion(out,label)
         loss.backward()
         optimizer.step()
-        count+=1
 
         if i % 5 == 0:
             timecost = time.time()-start
@@ -102,25 +105,47 @@ def validate(model,testdataloader,device,criterion,epoch):
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
-
     print('on test data')
     for i ,(im,label) in enumerate(testdataloader):
         im = im.to(device)
         label = label.to(device)
         out = model(im)
         loss = criterion(out,label)
-
+        imdex = 140
+        lenth = im.shape[0]
         # measure accuracy and record loss
         prec1, prec5 = accuracy(out.data, label, topk=(1, 5))
         losses.update(loss.item(), im.size(0))
         top1.update(prec1[0], im.size(0))
         top5.update(prec5[0], im.size(0))
+
+        if top1.avg>=50.:
+            fig = plt.figure(1)
+            for k in range(4):
+                x = random.randint(0, lenth-1)
+                inp = im[x]
+                inp = inp.to('cpu').numpy().transpose((1, 2, 0))
+                mean = np.array([0.485, 0.456, 0.406])
+                std = np.array([0.229, 0.224, 0.225])
+                inp = std * inp + mean
+                showim = np.clip(inp, 0, 1)
+
+                showoutvalue = out[x].data.to('cpu').numpy().tolist()
+                showout = showoutvalue.index(max(showoutvalue))
+                showimlabel = label.to('cpu').data[x].item()
+                imdex += 1
+                ax = fig.add_subplot(imdex)
+                ax.imshow(showim)
+                ax.set_title('pre:' + str(showout) + 'GT:' + str(showimlabel))
+                plt.axis('off')
+            plt.show()
+            plt.clf()
+
+
         if i %3 ==0:
             timecost = time.time() - start
             print('Epoch {0}\t / dataset {1}\t  timecost{timecost: .2f}\t Loss{loss: .5f}\t top1{top1: .2f}\t top5{top5: .2f}'.format(epoch,len(testdataloader),
                 timecost = timecost,loss = loss,top1 = top1.avg,top5 =top5.avg ))
-
-
     return top1.avg
 
 
@@ -144,7 +169,7 @@ def accuracy(output, target, topk=(1,)):
     maxk = max(topk)
     batch_size = target.size(0)
 
-    _, pred = output.topk(maxk, 1, True, True)
+    _, pred = output.topk(maxk, 1, True, True) #pre is the index of topk element
     pred = pred.t()
     correct = pred.eq(target.view(1, -1).expand_as(pred))
 
